@@ -145,7 +145,7 @@ async def capture_screenshot(url):
         # Navigation
         await page.goto(url, {
             'waitUntil': 'networkidle2',
-            'timeout': 15000
+            'timeout': 30000
         })
 
         # CSS pour masquer cookies/ads
