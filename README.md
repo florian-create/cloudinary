@@ -76,25 +76,55 @@ curl "http://localhost:5000/api/generate?url=https://example.com"
 
 ## Intégration avec Clay
 
-### Configuration HTTP API dans Clay
+### ⚠️ DEUX OPTIONS DISPONIBLES
+
+#### Option 1 : Endpoint JSON (Recommandé)
+
+**URL** : `/api/generate`
 
 1. Dans votre table Clay, ajoutez une colonne **HTTP API**
-
 2. **Configuration** :
    - Method: `GET`
    - URL: `https://your-render-url.onrender.com/api/generate`
-
 3. **Query Parameters** :
    | Key | Value |
    |-----|-------|
    | `url` | `{{Company domain}}` |
-
 4. **Advanced Settings** :
    - Timeout: `60 seconds`
    - Retry on failure: ✅
    - Cache results: ✅
 
-5. La réponse contiendra `screenshot_url` que vous pouvez utiliser directement
+**Réponse** :
+```json
+{
+  "screenshot_url": "https://res.cloudinary.com/..."
+}
+```
+
+#### Option 2 : Endpoint Texte Brut (Si Clay limite la taille)
+
+**URL** : `/api/generate-url`
+
+Si vous obtenez l'erreur "exceeded the cell size limit", utilisez cet endpoint qui retourne **uniquement l'URL en texte brut** (pas de JSON) :
+
+1. Dans votre table Clay, ajoutez une colonne **HTTP API**
+2. **Configuration** :
+   - Method: `GET`
+   - URL: `https://your-render-url.onrender.com/api/generate-url`
+3. **Query Parameters** :
+   | Key | Value |
+   |-----|-------|
+   | `url` | `{{Company domain}}` |
+4. **Advanced Settings** :
+   - Timeout: `60 seconds`
+   - Retry on failure: ✅
+   - Cache results: ✅
+
+**Réponse** : Texte brut directement utilisable
+```
+https://res.cloudinary.com/dqfnvegv2/image/upload/v1/screenshots/example-com.jpg
+```
 
 ## Gestion des cookies et popups
 
@@ -174,6 +204,24 @@ Génère un screenshot et l'upload sur Cloudinary
 
 **Paramètres** :
 - `url` (required) : URL du site
+
+**Réponse JSON** :
+```json
+{
+  "screenshot_url": "https://res.cloudinary.com/..."
+}
+```
+
+### GET /api/generate-url
+Version minimaliste qui retourne l'URL en texte brut (pas de JSON)
+
+**Paramètres** :
+- `url` (required) : URL du site
+
+**Réponse texte brut** :
+```
+https://res.cloudinary.com/dqfnvegv2/image/upload/v1/screenshots/example-com.jpg
+```
 
 ### GET /health
 Health check de l'API
