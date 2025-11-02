@@ -67,14 +67,18 @@ async def capture_screenshot(url):
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
         )
 
-        # Navigation
-        await page.goto(url, {
-            'waitUntil': 'networkidle2',
-            'timeout': 30000
-        })
+        # Navigation avec timeout réduit
+        try:
+            await page.goto(url, {
+                'waitUntil': 'domcontentloaded',  # Plus rapide que networkidle2
+                'timeout': 20000  # 20 secondes max
+            })
+        except:
+            # Si timeout, continuer quand même
+            pass
 
-        # Attendre un peu pour que la page se stabilise
-        await asyncio.sleep(1)
+        # Attendre que la page se stabilise
+        await asyncio.sleep(1.5)
 
         # CSS pour masquer cookies/popups/ads - Liste exhaustive
         await page.addStyleTag({
@@ -237,17 +241,14 @@ def generate_screenshot():
 
         if not url:
             return jsonify({
-                'error': 'Missing required parameter',
-                'message': 'The "url" parameter is required',
-                'example': '/api/generate?url=https://example.com'
+                'error': 'Missing URL parameter'
             }), 400
 
         # Valider l'URL
         if not re.match(r'^https?://', url):
             if not re.match(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url):
                 return jsonify({
-                    'error': 'Invalid URL',
-                    'message': 'URL must be a valid domain or full URL'
+                    'error': 'Invalid URL format'
                 }), 400
 
         print(f"[API] Processing: {url}")
@@ -257,27 +258,24 @@ def generate_screenshot():
         asyncio.set_event_loop(loop)
         screenshot_path = loop.run_until_complete(capture_screenshot(url))
 
-        print(f"[API] Screenshot captured: {screenshot_path}")
+        print(f"[API] Screenshot captured")
 
         # Upload vers Cloudinary
         cloudinary_url = upload_to_cloudinary(screenshot_path, url)
 
-        print(f"[API] Uploaded to Cloudinary: {cloudinary_url}")
+        print(f"[API] Uploaded to Cloudinary")
 
-        # Retourner l'URL
+        # Retourner UNIQUEMENT l'URL du screenshot (format minimal pour Clay)
         return jsonify({
-            'success': True,
-            'url': url,
-            'screenshot_url': cloudinary_url,
-            'message': 'Screenshot generated and uploaded successfully'
+            'screenshot_url': cloudinary_url
         }), 200
 
     except Exception as e:
-        print(f"[API] Error: {str(e)}")
+        # Limiter la taille du message d'erreur
+        error_msg = str(e)[:200]  # Max 200 caractères
+        print(f"[API] Error: {error_msg}")
         return jsonify({
-            'success': False,
-            'error': 'Screenshot generation failed',
-            'message': str(e)
+            'error': error_msg
         }), 500
 
 @app.route('/health', methods=['GET'])
