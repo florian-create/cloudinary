@@ -278,6 +278,36 @@ def generate_screenshot():
             'error': error_msg
         }), 500
 
+@app.route('/api/generate-url', methods=['GET'])
+def generate_screenshot_url_only():
+    """
+    Version ultra-minimaliste : retourne UNIQUEMENT l'URL du screenshot en texte brut
+    Idéal pour Clay si le JSON pose problème
+    """
+    try:
+        url = request.args.get('url')
+        if not url:
+            return 'ERROR: Missing URL parameter', 400
+
+        if not re.match(r'^https?://', url):
+            if not re.match(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url):
+                return 'ERROR: Invalid URL format', 400
+
+        # Générer le screenshot
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        screenshot_path = loop.run_until_complete(capture_screenshot(url))
+
+        # Upload vers Cloudinary
+        cloudinary_url = upload_to_cloudinary(screenshot_path, url)
+
+        # Retourner UNIQUEMENT l'URL en texte brut (pas de JSON)
+        return cloudinary_url, 200
+
+    except Exception as e:
+        error_msg = str(e)[:100]
+        return f'ERROR: {error_msg}', 500
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check"""
