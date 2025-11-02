@@ -28,7 +28,9 @@ CONFIG = {
     'width': 1200,
     'height': 800,
     'format': 'jpeg',
-    'quality': 85
+    'quality': 85,
+    'wait_after_load': 3,  # Secondes d'attente après le chargement initial
+    'navigation_timeout': 20000  # Timeout navigation en ms
 }
 
 def sanitize_domain(domain):
@@ -39,11 +41,15 @@ def sanitize_domain(domain):
     domain = re.sub(r'[^a-z0-9]', '-', domain, flags=re.IGNORECASE)
     return domain.lower()
 
-async def capture_screenshot(url):
+async def capture_screenshot(url, wait_time=None):
     """Capture un screenshot du site"""
     browser = None
 
     try:
+        # Utiliser le wait_time fourni ou celui par défaut
+        if wait_time is None:
+            wait_time = CONFIG['wait_after_load']
+
         # Normaliser l'URL
         if not url.startswith('http'):
             url = 'https://' + url
@@ -69,18 +75,54 @@ async def capture_screenshot(url):
 
         # Navigation avec timeout et gestion d'erreur
         try:
+            # D'abord attendre que le DOM soit chargé
             await page.goto(url, {
-                'waitUntil': 'domcontentloaded',  # Plus rapide que networkidle2
-                'timeout': 15000  # 15 secondes max
+                'waitUntil': 'domcontentloaded',
+                'timeout': CONFIG['navigation_timeout']
             })
+            print(f"[API] DOM loaded")
+
+            # Puis attendre que les ressources se chargent (images, CSS, fonts)
+            # On utilise networkidle0 avec un timeout court pour éviter d'attendre trop longtemps
+            try:
+                await page.waitForNavigation({
+                    'waitUntil': 'networkidle0',  # Attendre que le réseau soit idle
+                    'timeout': 5000  # Max 5 secondes supplémentaires
+                })
+                print(f"[API] Network idle reached")
+            except:
+                # Si timeout, pas grave, on continue
+                print(f"[API] Network didn't idle, continuing anyway")
+                pass
+
         except Exception as nav_error:
             # Si timeout ou erreur de navigation, continuer quand même
             print(f"[API] Navigation warning: {str(nav_error)[:100]}")
-            # Attendre un peu que la page charge partiellement
-            await asyncio.sleep(2)
 
-        # Attendre que la page se stabilise
-        await asyncio.sleep(1)
+        # Attendre que la page se stabilise complètement (images, animations, etc.)
+        print(f"[API] Waiting {wait_time}s for page to fully render...")
+        await asyncio.sleep(wait_time)
+
+        # Vérifier que les images sont chargées
+        try:
+            await page.evaluate("""
+                () => {
+                    return Promise.all(
+                        Array.from(document.images)
+                            .filter(img => !img.complete)
+                            .map(img => new Promise(resolve => {
+                                img.onload = img.onerror = resolve;
+                            }))
+                    );
+                }
+            """)
+            print(f"[API] All images loaded")
+        except:
+            print(f"[API] Some images may not be loaded, continuing anyway")
+            pass
+
+        # Petit délai supplémentaire pour les polices et animations CSS
+        await asyncio.sleep(0.5)
 
         # CSS pour masquer cookies/popups/ads - Liste exhaustive
         await page.addStyleTag({
@@ -259,12 +301,19 @@ def generate_screenshot():
                     'error': 'Invalid URL format'
                 }), 400
 
-        print(f"[API] Processing: {url}")
+        # Récupérer le paramètre wait optionnel (délai d'attente en secondes)
+        wait_time = request.args.get('wait', type=int)
+        if wait_time and (wait_time < 0 or wait_time > 10):
+            return jsonify({
+                'error': 'Wait parameter must be between 0 and 10 seconds'
+            }), 400
+
+        print(f"[API] Processing: {url} (wait: {wait_time if wait_time else 'default'}s)")
 
         # Générer le screenshot (async)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        screenshot_path = loop.run_until_complete(capture_screenshot(url))
+        screenshot_path = loop.run_until_complete(capture_screenshot(url, wait_time))
 
         print(f"[API] Screenshot captured")
 
@@ -305,10 +354,15 @@ def generate_screenshot_url_only():
             if not re.match(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url):
                 return 'ERROR: Invalid URL format', 400
 
+        # Récupérer le paramètre wait optionnel
+        wait_time = request.args.get('wait', type=int)
+        if wait_time and (wait_time < 0 or wait_time > 10):
+            return 'ERROR: Wait parameter must be between 0 and 10 seconds', 400
+
         # Générer le screenshot
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        screenshot_path = loop.run_until_complete(capture_screenshot(url))
+        screenshot_path = loop.run_until_complete(capture_screenshot(url, wait_time))
 
         # Upload vers Cloudinary
         cloudinary_url = upload_to_cloudinary(screenshot_path, url)
