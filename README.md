@@ -42,13 +42,22 @@ Le code est déjà sur GitHub : https://github.com/florian-create/cloudinary
 GET /api/generate?url=https://example.com
 ```
 
+**Paramètres optionnels** :
+- `wait` : Temps d'attente en secondes après le chargement (0-10, défaut: 3)
+
+**Exemples** :
+```bash
+# Avec délai par défaut (3 secondes)
+curl "https://cloudinary-spwk.onrender.com/api/generate-url?url=https://example.com"
+
+# Avec délai personnalisé (5 secondes pour sites complexes)
+curl "https://cloudinary-spwk.onrender.com/api/generate-url?url=https://example.com&wait=5"
+```
+
 **Réponse** :
 ```json
 {
-  "success": true,
-  "url": "https://example.com",
-  "screenshot_url": "https://res.cloudinary.com/dqfnvegv2/image/upload/v1/screenshots/example-com.jpg",
-  "message": "Screenshot generated and uploaded successfully"
+  "screenshot_url": "https://res.cloudinary.com/dqfnvegv2/image/upload/v1/screenshots/example-com.jpg"
 }
 ```
 
@@ -87,11 +96,12 @@ curl "http://localhost:5000/api/generate?url=https://example.com"
    - Method: `GET`
    - URL: `https://your-render-url.onrender.com/api/generate`
 3. **Query Parameters** :
-   | Key | Value |
-   |-----|-------|
-   | `url` | `{{Company domain}}` |
+   | Key | Value | Note |
+   |-----|-------|------|
+   | `url` | `{{Company domain}}` | Requis |
+   | `wait` | `5` | Optionnel : 0-10 secondes (défaut: 3) |
 4. **Advanced Settings** :
-   - Timeout: `60 seconds`
+   - Timeout: `75 seconds` (ajustez si vous changez `wait`)
    - Retry on failure: ✅
    - Cache results: ✅
 
@@ -113,11 +123,12 @@ Si vous obtenez l'erreur "exceeded the cell size limit", utilisez cet endpoint q
    - Method: `GET`
    - URL: `https://your-render-url.onrender.com/api/generate-url`
 3. **Query Parameters** :
-   | Key | Value |
-   |-----|-------|
-   | `url` | `{{Company domain}}` |
+   | Key | Value | Note |
+   |-----|-------|------|
+   | `url` | `{{Company domain}}` | Requis |
+   | `wait` | `5` | Optionnel : 0-10 secondes (défaut: 3) |
 4. **Advanced Settings** :
-   - Timeout: `60 seconds`
+   - Timeout: `75 seconds` (ajustez si vous changez `wait`)
    - Retry on failure: ✅
    - Cache results: ✅
 
