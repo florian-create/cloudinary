@@ -67,18 +67,20 @@ async def capture_screenshot(url):
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
         )
 
-        # Navigation avec timeout réduit
+        # Navigation avec timeout et gestion d'erreur
         try:
             await page.goto(url, {
                 'waitUntil': 'domcontentloaded',  # Plus rapide que networkidle2
-                'timeout': 20000  # 20 secondes max
+                'timeout': 15000  # 15 secondes max
             })
-        except:
-            # Si timeout, continuer quand même
-            pass
+        except Exception as nav_error:
+            # Si timeout ou erreur de navigation, continuer quand même
+            print(f"[API] Navigation warning: {str(nav_error)[:100]}")
+            # Attendre un peu que la page charge partiellement
+            await asyncio.sleep(2)
 
         # Attendre que la page se stabilise
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(1)
 
         # CSS pour masquer cookies/popups/ads - Liste exhaustive
         await page.addStyleTag({
@@ -237,11 +239,17 @@ def generate_screenshot():
     """
     try:
         # Récupérer l'URL
-        url = request.args.get('url')
+        url = request.args.get('url', '').strip()
 
         if not url:
             return jsonify({
                 'error': 'Missing URL parameter'
+            }), 400
+
+        # Rejeter les messages d'erreur de Clay
+        if 'exceeded' in url.lower() or 'error' in url.lower() or 'result' in url.lower():
+            return jsonify({
+                'error': 'Invalid URL: looks like an error message'
             }), 400
 
         # Valider l'URL
@@ -285,9 +293,13 @@ def generate_screenshot_url_only():
     Idéal pour Clay si le JSON pose problème
     """
     try:
-        url = request.args.get('url')
+        url = request.args.get('url', '').strip()
         if not url:
             return 'ERROR: Missing URL parameter', 400
+
+        # Rejeter les messages d'erreur de Clay
+        if 'exceeded' in url.lower() or 'error' in url.lower() or 'result' in url.lower():
+            return 'ERROR: Invalid URL (error message detected)', 400
 
         if not re.match(r'^https?://', url):
             if not re.match(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url):
