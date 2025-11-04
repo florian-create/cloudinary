@@ -15,6 +15,14 @@ import os
 import re
 import hashlib
 import gc  # Garbage collector pour libérer RAM
+import warnings
+import logging
+
+# Supprimer les warnings asyncio/websockets pour logs propres
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+warnings.filterwarnings('ignore', message='.*Event loop is closed.*')
+logging.getLogger('websockets').setLevel(logging.ERROR)
+logging.getLogger('pyppeteer').setLevel(logging.ERROR)
 
 app = Flask(__name__)
 CORS(app)
@@ -302,13 +310,19 @@ async def capture_screenshot_internal(url, wait_time=None):
             'fullPage': False
         })
 
-        # Fermer immédiatement pour libérer la RAM
+        # Fermer proprement pour libérer la RAM
         try:
             await page.close()
-        except:
+        except Exception:
             pass
 
-        await browser.close()
+        try:
+            # Fermer le browser et attendre que la connexion se termine proprement
+            await browser.close()
+            # Petit délai pour laisser les websockets se fermer proprement
+            await asyncio.sleep(0.1)
+        except Exception:
+            pass
 
         print(f"[API] Browser closed, RAM freed")
 
@@ -321,8 +335,9 @@ async def capture_screenshot_internal(url, wait_time=None):
         if browser:
             try:
                 await browser.close()
+                await asyncio.sleep(0.1)
                 print(f"[API] Browser closed after error")
-            except:
+            except Exception:
                 pass
         # GC même en cas d'erreur
         gc.collect()
@@ -435,8 +450,19 @@ def generate_screenshot():
             cloudinary_url = upload_to_cloudinary(screenshot_path, url)
             print(f"[API] Uploaded to Cloudinary")
         finally:
-            # Nettoyer l'event loop
-            loop.close()
+            # Nettoyer l'event loop proprement
+            try:
+                # Annuler toutes les tâches pending
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                # Attendre que les tâches se terminent
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
+            finally:
+                loop.close()
 
         # Retourner UNIQUEMENT l'URL du screenshot (format minimal pour Clay)
         return jsonify({
@@ -494,8 +520,19 @@ def generate_screenshot_url_only():
             cloudinary_url = upload_to_cloudinary(screenshot_path, url)
             print(f"[API] Screenshot generated and uploaded successfully")
         finally:
-            # Nettoyer l'event loop
-            loop.close()
+            # Nettoyer l'event loop proprement
+            try:
+                # Annuler toutes les tâches pending
+                pending = asyncio.all_tasks(loop)
+                for task in pending:
+                    task.cancel()
+                # Attendre que les tâches se terminent
+                if pending:
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            except Exception:
+                pass
+            finally:
+                loop.close()
 
         # Retourner UNIQUEMENT l'URL en texte brut (pas de JSON)
         return cloudinary_url, 200
