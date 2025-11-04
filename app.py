@@ -7,11 +7,13 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import cloudinary
 import cloudinary.uploader
+import cloudinary.api
 import asyncio
 from pyppeteer import launch
 import tempfile
 import os
 import re
+import hashlib
 
 app = Flask(__name__)
 CORS(app)
@@ -29,10 +31,11 @@ CONFIG = {
     'height': 800,
     'format': 'jpeg',
     'quality': 85,
-    'wait_after_load': 2,  # Réduit de 3s à 2s
-    'navigation_timeout': 15000,  # Réduit de 20s à 15s
-    'network_idle_timeout': 3000,  # Réduit de 5s à 3s
-    'image_load_timeout': 5000  # Timeout pour le chargement des images
+    'wait_after_load': 1.5,  # Réduit à 1.5s pour Clay
+    'navigation_timeout': 12000,  # Réduit à 12s
+    'network_idle_timeout': 2000,  # Réduit à 2s
+    'image_load_timeout': 4000,  # Réduit à 4s
+    'global_timeout': 45  # Timeout global en secondes (pour Clay < 60s)
 }
 
 def sanitize_domain(domain):
@@ -42,6 +45,29 @@ def sanitize_domain(domain):
     domain = re.sub(r'/$', '', domain)
     domain = re.sub(r'[^a-z0-9]', '-', domain, flags=re.IGNORECASE)
     return domain.lower()
+
+def get_url_hash(url):
+    """Génère un hash court pour l'URL (pour le cache)"""
+    normalized = url.lower().strip().rstrip('/')
+    return hashlib.md5(normalized.encode()).hexdigest()[:12]
+
+def check_screenshot_exists(url):
+    """Vérifie si un screenshot existe déjà sur Cloudinary"""
+    try:
+        filename = sanitize_domain(url)
+        public_id = f'screenshots/{filename}'
+
+        # Essayer de récupérer l'info de l'image
+        result = cloudinary.api.resource(public_id, resource_type='image')
+
+        # Si on arrive ici, l'image existe
+        return result['secure_url']
+    except cloudinary.exceptions.NotFound:
+        # L'image n'existe pas
+        return None
+    except Exception as e:
+        print(f"[API] Error checking Cloudinary cache: {e}")
+        return None
 
 async def capture_screenshot_internal(url, wait_time=None):
     """Capture un screenshot du site (fonction interne sans timeout)"""
@@ -142,8 +168,8 @@ async def capture_screenshot_internal(url, wait_time=None):
             print(f"[API] Some images may not be loaded, continuing anyway")
             pass
 
-        # Petit délai supplémentaire pour les polices et animations CSS (réduit)
-        await asyncio.sleep(0.3)
+        # Petit délai supplémentaire pour les polices et animations CSS (réduit à 0.2s)
+        await asyncio.sleep(0.2)
 
         # CSS pour masquer cookies/popups/ads - Liste exhaustive
         await page.addStyleTag({
@@ -245,8 +271,8 @@ async def capture_screenshot_internal(url, wait_time=None):
             }
         """)
 
-        # Attendre que les suppressions prennent effet (réduit)
-        await asyncio.sleep(0.2)
+        # Attendre que les suppressions prennent effet (minimal)
+        await asyncio.sleep(0.1)
 
         # Capturer le screenshot dans un fichier temporaire
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.jpeg')
@@ -270,17 +296,17 @@ async def capture_screenshot_internal(url, wait_time=None):
         raise e
 
 async def capture_screenshot(url, wait_time=None):
-    """Capture un screenshot avec timeout global de 60s"""
+    """Capture un screenshot avec timeout global optimisé pour Clay"""
     try:
-        # Timeout global de 60 secondes pour tout le processus
+        # Timeout global de 45 secondes pour Clay (qui a ~60s de timeout)
         screenshot_path = await asyncio.wait_for(
             capture_screenshot_internal(url, wait_time),
-            timeout=60.0
+            timeout=CONFIG['global_timeout']
         )
         return screenshot_path
     except asyncio.TimeoutError:
-        print(f"[API] Screenshot timeout after 60s for {url}")
-        raise Exception("Screenshot generation timeout after 60 seconds")
+        print(f"[API] Screenshot timeout after {CONFIG['global_timeout']}s for {url}")
+        raise Exception(f"Screenshot generation timeout after {CONFIG['global_timeout']} seconds")
     except Exception as e:
         print(f"[API] Screenshot error: {str(e)[:200]}")
         raise
@@ -385,8 +411,8 @@ def generate_screenshot():
 @app.route('/api/generate-url', methods=['GET'])
 def generate_screenshot_url_only():
     """
-    Version ultra-minimaliste : retourne UNIQUEMENT l'URL du screenshot en texte brut
-    Idéal pour Clay si le JSON pose problème
+    Version ultra-minimaliste avec cache : retourne UNIQUEMENT l'URL du screenshot en texte brut
+    NOUVEAU : Vérifie d'abord si le screenshot existe sur Cloudinary (retour instantané)
     """
     try:
         url = request.args.get('url', '').strip()
@@ -401,12 +427,21 @@ def generate_screenshot_url_only():
             if not re.match(r'^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', url):
                 return 'ERROR: Invalid URL format', 400
 
+        # NOUVEAU : Vérifier si le screenshot existe déjà (cache ultra-rapide)
+        print(f"[API] Checking cache for: {url}")
+        cached_url = check_screenshot_exists(url)
+        if cached_url:
+            print(f"[API] Cache HIT! Returning cached screenshot")
+            return cached_url, 200
+
+        print(f"[API] Cache MISS - Generating new screenshot")
+
         # Récupérer le paramètre wait optionnel
         wait_time = request.args.get('wait', type=int)
         if wait_time and (wait_time < 0 or wait_time > 10):
             return 'ERROR: Wait parameter must be between 0 and 10 seconds', 400
 
-        # Générer le screenshot avec timeout
+        # Générer le screenshot avec timeout optimisé
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
@@ -414,6 +449,7 @@ def generate_screenshot_url_only():
             screenshot_path = loop.run_until_complete(capture_screenshot(url, wait_time))
             # Upload vers Cloudinary
             cloudinary_url = upload_to_cloudinary(screenshot_path, url)
+            print(f"[API] Screenshot generated and uploaded successfully")
         finally:
             # Nettoyer l'event loop
             loop.close()
@@ -423,6 +459,7 @@ def generate_screenshot_url_only():
 
     except Exception as e:
         error_msg = str(e)[:100]
+        print(f"[API] Error: {error_msg}")
         return f'ERROR: {error_msg}', 500
 
 @app.route('/health', methods=['GET'])
