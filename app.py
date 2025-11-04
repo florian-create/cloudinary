@@ -29,8 +29,10 @@ CONFIG = {
     'height': 800,
     'format': 'jpeg',
     'quality': 85,
-    'wait_after_load': 3,  # Secondes d'attente après le chargement initial
-    'navigation_timeout': 20000  # Timeout navigation en ms
+    'wait_after_load': 2,  # Réduit de 3s à 2s
+    'navigation_timeout': 15000,  # Réduit de 20s à 15s
+    'network_idle_timeout': 3000,  # Réduit de 5s à 3s
+    'image_load_timeout': 5000  # Timeout pour le chargement des images
 }
 
 def sanitize_domain(domain):
@@ -41,8 +43,8 @@ def sanitize_domain(domain):
     domain = re.sub(r'[^a-z0-9]', '-', domain, flags=re.IGNORECASE)
     return domain.lower()
 
-async def capture_screenshot(url, wait_time=None):
-    """Capture un screenshot du site"""
+async def capture_screenshot_internal(url, wait_time=None):
+    """Capture un screenshot du site (fonction interne sans timeout)"""
     browser = None
 
     try:
@@ -54,10 +56,24 @@ async def capture_screenshot(url, wait_time=None):
         if not url.startswith('http'):
             url = 'https://' + url
 
-        # Lancer le navigateur
+        # Lancer le navigateur avec options d'optimisation mémoire
         browser = await launch(
             headless=True,
-            args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+            args=[
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--disable-software-rasterizer',
+                '--disable-extensions',
+                '--disable-background-networking',
+                '--disable-sync',
+                '--metrics-recording-only',
+                '--mute-audio',
+                '--no-first-run',
+                '--safebrowsing-disable-auto-update',
+                '--disable-notifications'
+            ]
         )
 
         page = await browser.newPage()
@@ -87,7 +103,7 @@ async def capture_screenshot(url, wait_time=None):
             try:
                 await page.waitForNavigation({
                     'waitUntil': 'networkidle0',  # Attendre que le réseau soit idle
-                    'timeout': 5000  # Max 5 secondes supplémentaires
+                    'timeout': CONFIG['network_idle_timeout']
                 })
                 print(f"[API] Network idle reached")
             except:
@@ -103,26 +119,31 @@ async def capture_screenshot(url, wait_time=None):
         print(f"[API] Waiting {wait_time}s for page to fully render...")
         await asyncio.sleep(wait_time)
 
-        # Vérifier que les images sont chargées
+        # Vérifier que les images sont chargées (avec timeout)
         try:
-            await page.evaluate("""
-                () => {
-                    return Promise.all(
-                        Array.from(document.images)
-                            .filter(img => !img.complete)
-                            .map(img => new Promise(resolve => {
-                                img.onload = img.onerror = resolve;
-                            }))
-                    );
-                }
-            """)
+            await asyncio.wait_for(
+                page.evaluate("""
+                    () => {
+                        return Promise.all(
+                            Array.from(document.images)
+                                .filter(img => !img.complete)
+                                .map(img => new Promise(resolve => {
+                                    img.onload = img.onerror = resolve;
+                                }))
+                        );
+                    }
+                """),
+                timeout=CONFIG['image_load_timeout'] / 1000  # Convertir ms en secondes
+            )
             print(f"[API] All images loaded")
-        except:
+        except asyncio.TimeoutError:
+            print(f"[API] Image loading timeout, continuing anyway")
+        except Exception as e:
             print(f"[API] Some images may not be loaded, continuing anyway")
             pass
 
-        # Petit délai supplémentaire pour les polices et animations CSS
-        await asyncio.sleep(0.5)
+        # Petit délai supplémentaire pour les polices et animations CSS (réduit)
+        await asyncio.sleep(0.3)
 
         # CSS pour masquer cookies/popups/ads - Liste exhaustive
         await page.addStyleTag({
@@ -224,8 +245,8 @@ async def capture_screenshot(url, wait_time=None):
             }
         """)
 
-        # Attendre que les suppressions prennent effet
-        await asyncio.sleep(0.5)
+        # Attendre que les suppressions prennent effet (réduit)
+        await asyncio.sleep(0.2)
 
         # Capturer le screenshot dans un fichier temporaire
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.jpeg')
@@ -242,25 +263,48 @@ async def capture_screenshot(url, wait_time=None):
 
     except Exception as e:
         if browser:
-            await browser.close()
+            try:
+                await browser.close()
+            except:
+                pass
         raise e
 
+async def capture_screenshot(url, wait_time=None):
+    """Capture un screenshot avec timeout global de 60s"""
+    try:
+        # Timeout global de 60 secondes pour tout le processus
+        screenshot_path = await asyncio.wait_for(
+            capture_screenshot_internal(url, wait_time),
+            timeout=60.0
+        )
+        return screenshot_path
+    except asyncio.TimeoutError:
+        print(f"[API] Screenshot timeout after 60s for {url}")
+        raise Exception("Screenshot generation timeout after 60 seconds")
+    except Exception as e:
+        print(f"[API] Screenshot error: {str(e)[:200]}")
+        raise
+
 def upload_to_cloudinary(file_path, domain):
-    """Upload vers Cloudinary"""
+    """Upload vers Cloudinary avec gestion d'erreur améliorée"""
     filename = sanitize_domain(domain)
 
-    result = cloudinary.uploader.upload(
-        file_path,
-        folder='screenshots',
-        public_id=filename,
-        overwrite=True,
-        resource_type='image'
-    )
-
-    # Supprimer le fichier temporaire
-    os.unlink(file_path)
-
-    return result['secure_url']
+    try:
+        result = cloudinary.uploader.upload(
+            file_path,
+            folder='screenshots',
+            public_id=filename,
+            overwrite=True,
+            resource_type='image'
+        )
+        return result['secure_url']
+    finally:
+        # Toujours supprimer le fichier temporaire, même en cas d'erreur
+        try:
+            if os.path.exists(file_path):
+                os.unlink(file_path)
+        except Exception as e:
+            print(f"[API] Warning: Could not delete temp file {file_path}: {e}")
 
 @app.route('/')
 def index():
@@ -310,17 +354,20 @@ def generate_screenshot():
 
         print(f"[API] Processing: {url} (wait: {wait_time if wait_time else 'default'}s)")
 
-        # Générer le screenshot (async)
+        # Générer le screenshot (async) avec timeout
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        screenshot_path = loop.run_until_complete(capture_screenshot(url, wait_time))
 
-        print(f"[API] Screenshot captured")
+        try:
+            screenshot_path = loop.run_until_complete(capture_screenshot(url, wait_time))
+            print(f"[API] Screenshot captured")
 
-        # Upload vers Cloudinary
-        cloudinary_url = upload_to_cloudinary(screenshot_path, url)
-
-        print(f"[API] Uploaded to Cloudinary")
+            # Upload vers Cloudinary
+            cloudinary_url = upload_to_cloudinary(screenshot_path, url)
+            print(f"[API] Uploaded to Cloudinary")
+        finally:
+            # Nettoyer l'event loop
+            loop.close()
 
         # Retourner UNIQUEMENT l'URL du screenshot (format minimal pour Clay)
         return jsonify({
@@ -359,13 +406,17 @@ def generate_screenshot_url_only():
         if wait_time and (wait_time < 0 or wait_time > 10):
             return 'ERROR: Wait parameter must be between 0 and 10 seconds', 400
 
-        # Générer le screenshot
+        # Générer le screenshot avec timeout
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        screenshot_path = loop.run_until_complete(capture_screenshot(url, wait_time))
 
-        # Upload vers Cloudinary
-        cloudinary_url = upload_to_cloudinary(screenshot_path, url)
+        try:
+            screenshot_path = loop.run_until_complete(capture_screenshot(url, wait_time))
+            # Upload vers Cloudinary
+            cloudinary_url = upload_to_cloudinary(screenshot_path, url)
+        finally:
+            # Nettoyer l'event loop
+            loop.close()
 
         # Retourner UNIQUEMENT l'URL en texte brut (pas de JSON)
         return cloudinary_url, 200
