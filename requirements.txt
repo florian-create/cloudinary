@@ -3,4 +3,3 @@ flask-cors==4.0.0
 cloudinary==1.40.0
 pyppeteer==2.0.0
 gunicorn==21.2.0
-gevent==24.2.1
