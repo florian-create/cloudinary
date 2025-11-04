@@ -32,10 +32,10 @@ CONFIG = {
     'format': 'jpeg',
     'quality': 85,
     'wait_after_load': 1.5,  # Réduit à 1.5s pour Clay
-    'navigation_timeout': 12000,  # Réduit à 12s
-    'network_idle_timeout': 2000,  # Réduit à 2s
-    'image_load_timeout': 4000,  # Réduit à 4s
-    'global_timeout': 45  # Timeout global en secondes (pour Clay < 60s)
+    'navigation_timeout': 20000,  # Augmenté à 20s pour sites lents
+    'network_idle_timeout': 4000,  # Augmenté à 4s
+    'image_load_timeout': 6000,  # Augmenté à 6s
+    'global_timeout': 90  # Augmenté à 90s pour sites lents (Gunicorn 180s)
 }
 
 def sanitize_domain(domain):
@@ -107,8 +107,7 @@ async def capture_screenshot_internal(url, wait_time=None):
                 '--disable-crash-reporter',
                 '--disable-in-process-stack-traces',
                 '--disable-logging',
-                '--log-level=3',
-                '--single-process'
+                '--log-level=3'
             ]
         )
 
