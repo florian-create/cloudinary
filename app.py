@@ -82,9 +82,14 @@ async def capture_screenshot_internal(url, wait_time=None):
         if not url.startswith('http'):
             url = 'https://' + url
 
-        # Lancer le navigateur avec options d'optimisation mémoire
+        print(f"[API] Launching browser for {url}...")
+
+        # Lancer le navigateur avec options d'optimisation mémoire et stabilité
         browser = await launch(
             headless=True,
+            handleSIGINT=False,
+            handleSIGTERM=False,
+            handleSIGHUP=False,
             args=[
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
@@ -98,9 +103,16 @@ async def capture_screenshot_internal(url, wait_time=None):
                 '--mute-audio',
                 '--no-first-run',
                 '--safebrowsing-disable-auto-update',
-                '--disable-notifications'
+                '--disable-notifications',
+                '--disable-crash-reporter',
+                '--disable-in-process-stack-traces',
+                '--disable-logging',
+                '--log-level=3',
+                '--single-process'
             ]
         )
+
+        print(f"[API] Browser launched successfully")
 
         page = await browser.newPage()
 
@@ -295,8 +307,10 @@ async def capture_screenshot_internal(url, wait_time=None):
                 pass
         raise e
 
-async def capture_screenshot(url, wait_time=None):
-    """Capture un screenshot avec timeout global optimisé pour Clay"""
+async def capture_screenshot(url, wait_time=None, retry=0):
+    """Capture un screenshot avec timeout global optimisé pour Clay et retry"""
+    max_retries = 2
+
     try:
         # Timeout global de 45 secondes pour Clay (qui a ~60s de timeout)
         screenshot_path = await asyncio.wait_for(
@@ -308,7 +322,15 @@ async def capture_screenshot(url, wait_time=None):
         print(f"[API] Screenshot timeout after {CONFIG['global_timeout']}s for {url}")
         raise Exception(f"Screenshot generation timeout after {CONFIG['global_timeout']} seconds")
     except Exception as e:
-        print(f"[API] Screenshot error: {str(e)[:200]}")
+        error_msg = str(e)
+        print(f"[API] Screenshot error (attempt {retry + 1}/{max_retries + 1}): {error_msg[:200]}")
+
+        # Retry si "Browser closed unexpectedly" et retry disponibles
+        if "Browser closed" in error_msg and retry < max_retries:
+            print(f"[API] Retrying screenshot generation (attempt {retry + 2}/{max_retries + 1})...")
+            await asyncio.sleep(1)  # Petit délai avant retry
+            return await capture_screenshot(url, wait_time, retry + 1)
+
         raise
 
 def upload_to_cloudinary(file_path, domain):
