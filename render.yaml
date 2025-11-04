@@ -2,9 +2,9 @@ services:
   - type: web
     name: screenshot-api
     env: python
-    buildCommand: pip install -r requirements.txt && pyppeteer-install
+    buildCommand: bash build.sh
     startCommand: gunicorn app:app --timeout 180 --workers 1 --threads 2 --worker-tmp-dir /dev/shm --max-requests 10 --max-requests-jitter 5
-    plan: free
+    plan: starter
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
