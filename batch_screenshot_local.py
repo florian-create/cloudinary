@@ -16,6 +16,7 @@ import hashlib
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 import time
+import psutil  # Pour monitoring CPU/RAM
 
 # Configuration Cloudinary
 cloudinary.config(
@@ -24,7 +25,7 @@ cloudinary.config(
     api_secret='59NwZ6QGma6WHJkYCKmisMG73Lg'
 )
 
-# Configuration
+# Configuration optimisée pour MacBook Air M1
 CONFIG = {
     'width': 1200,
     'height': 800,
@@ -33,8 +34,9 @@ CONFIG = {
     'wait_after_load': 1.5,
     'navigation_timeout': 20000,
     'network_idle_timeout': 4000,
-    'concurrent_workers': 10,  # Nombre de screenshots simultanés
-    'max_retries': 2
+    'concurrent_workers': 6,  # OPTIMISÉ pour MacBook Air M1 (6 workers = doux)
+    'max_retries': 2,
+    'batch_delay': 0.5  # Délai entre chaque worker (évite les pics)
 }
 
 def sanitize_domain(domain):
@@ -55,8 +57,28 @@ def check_screenshot_exists(url):
     except:
         return None
 
+def check_system_health():
+    """Vérifie la santé du système (CPU/RAM/Température)"""
+    cpu_percent = psutil.cpu_percent(interval=1)
+    memory = psutil.virtual_memory()
+
+    # Warning si CPU > 80% ou RAM > 85%
+    if cpu_percent > 80:
+        print(f"⚠️  CPU usage high: {cpu_percent}% - Consider reducing workers")
+    if memory.percent > 85:
+        print(f"⚠️  RAM usage high: {memory.percent}% - Consider reducing workers")
+
+    return {
+        'cpu_percent': cpu_percent,
+        'ram_percent': memory.percent,
+        'ram_available_gb': memory.available / (1024**3)
+    }
+
 async def capture_screenshot(url, semaphore):
     """Capture un screenshot avec contrôle de concurrence"""
+    # Petit délai pour éviter les pics de démarrage
+    await asyncio.sleep(CONFIG.get('batch_delay', 0))
+
     async with semaphore:
         browser = None
         try:
@@ -198,14 +220,20 @@ async def process_batch(urls, output_csv='results.csv'):
             elif result['status'] == 'error':
                 errors += 1
 
-            # Progress
+            # Progress avec monitoring système (toutes les 10 URLs)
             elapsed = time.time() - start_time
             rate = processed / elapsed if elapsed > 0 else 0
             eta = (total - processed) / rate if rate > 0 else 0
 
+            # Check système toutes les 10 URLs
+            health_info = ""
+            if processed % 10 == 0:
+                health = check_system_health()
+                health_info = f" | 💻 CPU: {health['cpu_percent']:.0f}% | 🧠 RAM: {health['ram_percent']:.0f}%"
+
             print(f"📊 Progress: {processed}/{total} ({processed/total*100:.1f}%) | "
                   f"✅ {success + cached} | ❌ {errors} | "
-                  f"⏱️  {rate:.1f}/s | ETA: {eta/60:.1f}min")
+                  f"⏱️  {rate:.1f}/s | ETA: {eta/60:.1f}min{health_info}")
 
     # Sauvegarder les résultats
     with open(output_csv, 'w', newline='', encoding='utf-8') as f:
