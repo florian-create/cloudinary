@@ -35,7 +35,7 @@ CONFIG = {
     'navigation_timeout': 20000,  # Augmenté à 20s pour sites lents
     'network_idle_timeout': 4000,  # Augmenté à 4s
     'image_load_timeout': 6000,  # Augmenté à 6s
-    'global_timeout': 90  # Augmenté à 90s pour sites lents (Gunicorn 180s)
+    'global_timeout': 120  # Augmenté à 120s pour sites très lents (Gunicorn 180s)
 }
 
 def sanitize_domain(domain):
