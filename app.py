@@ -14,6 +14,7 @@ import tempfile
 import os
 import re
 import hashlib
+import gc  # Garbage collector pour libérer RAM
 
 app = Flask(__name__)
 CORS(app)
@@ -25,12 +26,12 @@ cloudinary.config(
     api_secret='59NwZ6QGma6WHJkYCKmisMG73Lg'
 )
 
-# Configuration
+# Configuration optimisée pour free tier (512MB RAM)
 CONFIG = {
     'width': 1200,
     'height': 800,
     'format': 'jpeg',
-    'quality': 85,
+    'quality': 80,  # Réduit de 85 à 80 pour économiser RAM
     'wait_after_load': 1.5,  # Réduit à 1.5s pour Clay
     'navigation_timeout': 20000,  # Augmenté à 20s pour sites lents
     'network_idle_timeout': 4000,  # Augmenté à 4s
@@ -84,7 +85,7 @@ async def capture_screenshot_internal(url, wait_time=None):
 
         print(f"[API] Launching browser for {url}...")
 
-        # Lancer le navigateur avec options d'optimisation mémoire et stabilité
+        # Lancer le navigateur avec optimisation mémoire MAXIMALE pour free tier
         browser = await launch(
             headless=True,
             handleSIGINT=False,
@@ -107,7 +108,14 @@ async def capture_screenshot_internal(url, wait_time=None):
                 '--disable-crash-reporter',
                 '--disable-in-process-stack-traces',
                 '--disable-logging',
-                '--log-level=3'
+                '--log-level=3',
+                '--disable-accelerated-2d-canvas',
+                '--disable-accelerated-video-decode',
+                '--disable-webgl',
+                '--disable-javascript-harmony',
+                '--js-flags=--max-old-space-size=256',  # Limite JS heap à 256MB
+                '--memory-pressure-off',
+                '--max-old-space-size=256'  # Limite totale Node.js à 256MB
             ]
         )
 
@@ -294,7 +302,18 @@ async def capture_screenshot_internal(url, wait_time=None):
             'fullPage': False
         })
 
+        # Fermer immédiatement pour libérer la RAM
+        try:
+            await page.close()
+        except:
+            pass
+
         await browser.close()
+
+        print(f"[API] Browser closed, RAM freed")
+
+        # Forcer le garbage collection pour libérer la RAM immédiatement
+        gc.collect()
 
         return temp_file.name
 
@@ -302,8 +321,11 @@ async def capture_screenshot_internal(url, wait_time=None):
         if browser:
             try:
                 await browser.close()
+                print(f"[API] Browser closed after error")
             except:
                 pass
+        # GC même en cas d'erreur
+        gc.collect()
         raise e
 
 async def capture_screenshot(url, wait_time=None, retry=0):
